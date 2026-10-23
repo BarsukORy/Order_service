@@ -1,6 +1,10 @@
+from uuid import uuid4
 from django.db import models
 from django.contrib.auth.models import AbstractUser, BaseUserManager
-from django_app.services import DjangoUniqueIdGenerator
+from business_logic.domain.models import Order, ReservedInventoryItem
+
+
+"""Раздел магазина."""
 
 
 class CustomUserManager(BaseUserManager):
@@ -9,7 +13,7 @@ class CustomUserManager(BaseUserManager):
         if not email:
             raise ValueError('Users must have an email address')
         user = self.model(email=self.normalize_email(email), **extra_fields)
-        user.domain_id = DjangoUniqueIdGenerator(self.model).generate_id()
+        user.domain_id = str(uuid4())
         user.set_password(password)
         user.save()
         return user
@@ -59,11 +63,22 @@ class CartLineModel(models.Model):
     product = models.ForeignKey(ProductModel, on_delete=models.CASCADE)
     quantity = models.IntegerField()
 
+    class Meta:
+        constraints = [
+            models.UniqueConstraint(fields=['cart', 'product'], name='unique_product_cart')
+        ]
+
 
 class OrderModel(models.Model):
     domain_id = models.CharField(max_length=255, unique=True)
     person = models.ForeignKey(PersonModel, on_delete=models.CASCADE)
     final_price = models.DecimalField(max_digits=10, decimal_places=2)
+    status = models.CharField(
+        choices=[(s.name, s.value) for s in Order.OrderStatus],
+        default=Order.OrderStatus.in_progress.name,
+        max_length=50
+    )
+    created_at = models.DateTimeField(auto_now_add=True)
 
 
 class OrderLineModel(models.Model):
@@ -74,6 +89,40 @@ class OrderLineModel(models.Model):
     line_price = models.DecimalField(max_digits=10, decimal_places=2)
 
 
+"""Раздел склада."""
+
+
 class InventoryItemModel(models.Model):
-    sku = models.CharField(max_length=50, unique=True)
+    sku = models.CharField(max_length=50)
+    warehouse_id = models.CharField(max_length=50)
+    physical_quantity = models.IntegerField()
+    reserved_quantity = models.IntegerField()
+
+    class Meta:
+        constraints = [
+            models.UniqueConstraint(fields=['sku', 'warehouse_id'], name='unique_inventory_sku')
+        ]
+
+
+class AllocationModel(models.Model):
+    order_id = models.CharField(max_length=50, unique=True)
+
+
+class ReservedInventoryItemModel(models.Model):
+    allocation = models.ForeignKey(AllocationModel, on_delete=models.CASCADE)
+    sku = models.CharField(max_length=50)
+    warehouse_id = models.CharField(max_length=50)
     quantity = models.IntegerField()
+    status = models.CharField(
+        choices=[(s.name, s.value) for s in ReservedInventoryItem.ReservedInventoryItemStatus],
+        default=ReservedInventoryItem.ReservedInventoryItemStatus.reserved.name,
+        max_length=50
+    )
+
+    class Meta:
+        constraints = [
+            models.UniqueConstraint(
+                fields=['allocation', 'sku', 'warehouse_id'],
+                name='unique_allocation_inventory_sku'
+            )
+        ]
