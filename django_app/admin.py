@@ -5,7 +5,9 @@ from django_app.models import (PersonModel,
                                CartModel,
                                OrderLineModel,
                                OrderModel,
-                               InventoryItemModel)
+                               InventoryItemModel,
+                               ReservedInventoryItemModel,
+                               AllocationModel)
 
 
 @admin.register(PersonModel)
@@ -15,11 +17,6 @@ class PersonModelAdmin(admin.ModelAdmin):
 
 @admin.register(ProductModel)
 class ProductModelAdmin(admin.ModelAdmin):
-    pass
-
-
-@admin.register(InventoryItemModel)
-class InventoryItemModelAdmin(admin.ModelAdmin):
     pass
 
 
@@ -40,4 +37,19 @@ class OrderLineModelAdmin(admin.ModelAdmin):
 
 @admin.register(OrderModel)
 class OrderModelAdmin(admin.ModelAdmin):
+    pass
+
+
+@admin.register(InventoryItemModel)
+class InventoryItemModelAdmin(admin.ModelAdmin):
+    pass
+
+
+@admin.register(ReservedInventoryItemModel)
+class ReservedInventoryItemModelAdmin(admin.ModelAdmin):
+    pass
+
+
+@admin.register(AllocationModel)
+class AllocationModelAdmin(admin.ModelAdmin):
     pass

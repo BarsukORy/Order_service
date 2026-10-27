@@ -3,7 +3,9 @@ from business_logic.service_layer.ports.repositories import (AbstractCartReposit
                                                              AbstractOrderRepository,
                                                              AbstractProductRepository,
                                                              AbstractPersonRepository,
-                                                             AbstractInventoryItemRepository)
+                                                             AbstractInventoryItemRepository,
+                                                             AbstractAllocationRepository,
+                                                             AbstractAggregateRepository)
 
 
 class AbstractUnitOfWork(ABC):
@@ -13,9 +15,21 @@ class AbstractUnitOfWork(ABC):
     cart_repo: AbstractCartRepository
     order_repo: AbstractOrderRepository
     inventory_item_repo: AbstractInventoryItemRepository
+    allocation_repo: AbstractAllocationRepository
+
+    def commit(self):
+        self._commit()
+
+    def collect_new_messages(self):
+        for repo in vars(self).values():
+            if isinstance(repo, AbstractAggregateRepository):
+                for aggregate in repo.seen:
+                    while aggregate.events:
+                        message = aggregate.events.popleft()
+                        yield message
 
     @abstractmethod
-    def commit(self):
+    def _commit(self):
         raise NotImplementedError
 
     @abstractmethod

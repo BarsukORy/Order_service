@@ -107,6 +107,7 @@ class DjangoCartRepository(AbstractCartRepository):
         return cart_to_domain(person_orm, cart_lines_orm)
 
     def save_cart(self, cart: Cart) -> None:
+        self._add(cart)
         cart_orm = CartModel.objects.filter(person__domain_id=cart.person_id).first()
 
         if cart_orm is None:
@@ -172,6 +173,7 @@ class DjangoOrderRepository(AbstractOrderRepository):
 
     def save_order(self, order: Order) -> None:
         """При существующем заказе у него может меняться только поле статуса. """
+        self._add(order)
         order_orm = OrderModel.objects.filter(domain_id=order.order_id).first()
 
         if order_orm is None:
@@ -248,6 +250,7 @@ class DjangoAllocationRepository(AbstractAllocationRepository):
         return allocation_to_domain(allocation_orm, res_inv_items_orm)
 
     def save_allocation(self, allocation: Allocation) -> None:
+        self._add(allocation)
         allocation_orm = AllocationModel.objects.filter(order_id=allocation.order_id).first()
 
         if allocation_orm is None:

@@ -3,7 +3,8 @@ from django_app.adapters.repositories import (DjangoCartRepository,
                                               DjangoOrderRepository,
                                               DjangoProductRepository,
                                               DjangoPersonRepository,
-                                              DjangoInventoryItemRepository)
+                                              DjangoInventoryItemRepository,
+                                              DjangoAllocationRepository)
 from django.db import transaction
 
 
@@ -15,13 +16,14 @@ class DjangoUnitOfWork(AbstractUnitOfWork):
         self.cart_repo = DjangoCartRepository()
         self.order_repo = DjangoOrderRepository()
         self.inventory_item_repo = DjangoInventoryItemRepository()
+        self.allocation_repo = DjangoAllocationRepository()
 
         self.atomic = None
         self._finished = False
 
-    def commit(self):
+    def _commit(self):
         if self._finished:
-            raise RuntimeError("UnitOfWork already finished")
+            raise RuntimeError('UnitOfWork already finished')
         self._finished = True
         self.atomic.__exit__(None, None, None)
 

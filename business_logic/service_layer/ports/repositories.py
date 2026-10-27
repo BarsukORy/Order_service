@@ -4,11 +4,22 @@ from business_logic.domain.models import (Person,
                                           Cart,
                                           Order,
                                           InventoryItem,
-                                          Allocation)
+                                          Allocation,
+                                          BaseAggregate)
 
 
 class AbstractRepository(ABC):
     pass
+
+
+class AbstractAggregateRepository(AbstractRepository):
+
+    def __init__(self):
+        super().__init__()
+        self.seen: set[BaseAggregate] = set()
+
+    def _add(self, aggregate: BaseAggregate):
+        self.seen.add(aggregate)
 
 
 """Раздел магазина."""
@@ -36,7 +47,7 @@ class AbstractProductRepository(AbstractRepository):
         raise NotImplementedError
 
 
-class AbstractCartRepository(AbstractRepository):
+class AbstractCartRepository(AbstractAggregateRepository):
     """
     Адаптер также должен реализовать внутренний метод создания корзины:
     def _create_cart(cls, cart: Cart) -> None
@@ -51,7 +62,7 @@ class AbstractCartRepository(AbstractRepository):
         raise NotImplementedError
 
 
-class AbstractOrderRepository(AbstractRepository):
+class AbstractOrderRepository(AbstractAggregateRepository):
     """
     Адаптер также должен реализовать внутренний метод создания заказа:
     def _create_order(cls, order: Order) -> None
@@ -84,7 +95,7 @@ class AbstractInventoryItemRepository(AbstractRepository):
         raise NotImplementedError
 
 
-class AbstractAllocationRepository(AbstractRepository):
+class AbstractAllocationRepository(AbstractAggregateRepository):
     """
     Адаптер также должен реализовать внутренний метод для сохранения товаров:
     def _save_reserved_inventory_items(

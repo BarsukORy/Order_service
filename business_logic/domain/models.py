@@ -1,8 +1,9 @@
 import enum
 import uuid
+from collections import deque
 from dataclasses import dataclass, replace
 from decimal import Decimal
-from typing import Iterable, List
+from typing import Iterable, List, Deque
 from types import MappingProxyType
 from business_logic.domain.events import Event
 from business_logic.domain.exceptions import (TheOrderLinesDoesNotExist,
@@ -15,7 +16,7 @@ from business_logic.domain.exceptions import (TheOrderLinesDoesNotExist,
 class BaseAggregate:
 
     def __init__(self) -> None:
-        self.events: list[Event] = []
+        self.events: Deque[Event] = deque()
 
 
 """
@@ -53,25 +54,25 @@ class InventoryItem:
     def decrease_quantity(self, quantity: int) -> "InventoryItem":
         self._check_positive(self, quantity)
         if not self.physical_quantity >= quantity:
-            raise ValueError()
+            raise InvalidValueForTheOperation(self, quantity)
         return replace(self, physical_quantity=self.physical_quantity - quantity)
 
     def reserve(self, quantity: int) -> "InventoryItem":
         self._check_positive(self, quantity)
         if quantity > self.available_quantity:
-            raise ValueError()
+            raise InvalidValueForTheOperation(self, quantity)
         return replace(self, reserved_quantity=self.reserved_quantity + quantity)
 
     def cancel_reserve(self, quantity: int) -> "InventoryItem":
         self._check_positive(self, quantity)
         if quantity > self.reserved_quantity:
-            raise ValueError()
+            raise InvalidValueForTheOperation(self, quantity)
         return replace(self, reserved_quantity=self.reserved_quantity - quantity)
 
     def shipment(self, quantity: int) -> "InventoryItem":
         self._check_positive(self, quantity)
         if quantity > self.reserved_quantity:
-            raise ValueError()
+            raise InvalidValueForTheOperation(self, quantity)
         return replace(
             self,
             physical_quantity=self.physical_quantity - quantity,
@@ -528,7 +529,7 @@ class Order(BaseAggregate):
 
     @property
     def quantity_for_sku(self) -> dict[str, int]:
-        return {sku: line.quantity for sku, line in self._order_lines}
+        return {sku: line.quantity for sku, line in self._order_lines.items()}
 
     @staticmethod
     def calculate_final_price(order_lines: dict[str, OrderLine]) -> Decimal:
