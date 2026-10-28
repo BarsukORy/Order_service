@@ -4,6 +4,10 @@ from django.contrib.auth.models import AbstractUser, BaseUserManager
 from business_logic.domain.models import Order, ReservedInventoryItem
 
 
+class BaseAggregateModel(models.Model):
+    version_number = models.IntegerField(default=0)
+
+
 """Раздел магазина."""
 
 
@@ -54,7 +58,7 @@ class ProductModel(models.Model):
     unit_price = models.DecimalField(max_digits=10, decimal_places=2)
 
 
-class CartModel(models.Model):
+class CartModel(BaseAggregateModel):
     person = models.OneToOneField(PersonModel, on_delete=models.CASCADE)
 
 
@@ -69,7 +73,7 @@ class CartLineModel(models.Model):
         ]
 
 
-class OrderModel(models.Model):
+class OrderModel(BaseAggregateModel):
     domain_id = models.CharField(max_length=255, unique=True)
     person = models.ForeignKey(PersonModel, on_delete=models.CASCADE)
     final_price = models.DecimalField(max_digits=10, decimal_places=2)
@@ -104,7 +108,7 @@ class InventoryItemModel(models.Model):
         ]
 
 
-class AllocationModel(models.Model):
+class AllocationModel(BaseAggregateModel):
     order_id = models.CharField(max_length=50, unique=True)
 
 

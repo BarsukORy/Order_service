@@ -18,7 +18,7 @@ class AbstractAggregateRepository(AbstractRepository):
         super().__init__()
         self.seen: set[BaseAggregate] = set()
 
-    def _add(self, aggregate: BaseAggregate):
+    def _add_aggregate_to_seen(self, aggregate: BaseAggregate):
         self.seen.add(aggregate)
 
 
@@ -49,9 +49,12 @@ class AbstractProductRepository(AbstractRepository):
 
 class AbstractCartRepository(AbstractAggregateRepository):
     """
-    Адаптер также должен реализовать внутренний метод создания корзины:
-    def _create_cart(cls, cart: Cart) -> None
+    Адаптер также должен реализовать внутренний метод для сохранения товаров:
+        def _save_cart_lines(cls, cart: Cart, cart_orm: CartModel) -> None:
     """
+    @abstractmethod
+    def create_cart(self, cart: Cart) -> None:
+        raise NotImplementedError
 
     @abstractmethod
     def get_cart_by_person(self, person_id: str) -> Cart:
@@ -63,10 +66,10 @@ class AbstractCartRepository(AbstractAggregateRepository):
 
 
 class AbstractOrderRepository(AbstractAggregateRepository):
-    """
-    Адаптер также должен реализовать внутренний метод создания заказа:
-    def _create_order(cls, order: Order) -> None
-    """
+
+    @abstractmethod
+    def create_order(self, order: Order) -> None:
+        raise NotImplementedError
 
     @abstractmethod
     def save_order(self, order: Order) -> None:
@@ -102,8 +105,10 @@ class AbstractAllocationRepository(AbstractAggregateRepository):
                     cls,
                     allocation_orm: AllocationModel,
                     reserved_inventory_items: tuple[ReservedInventoryItem]) -> None:
-    def _create_allocation(cls, allocation: Allocation) -> None:
     """
+    @abstractmethod
+    def create_allocation(self, allocation: Allocation) -> None:
+        raise NotImplementedError
 
     @abstractmethod
     def get_allocation_by_order_id(self, order_id: str) -> Allocation:

@@ -30,7 +30,7 @@ class InventoryItemService:
         allocation, changed_inv_items = (
             Allocation.place(order.order_id, order.quantity_for_sku, self.get_items(order.all_sku)))
         allocation.events.append(OrderAllocated(allocation.order_id))
-        self.uow.allocation_repo.save_allocation(allocation)
+        self.uow.allocation_repo.create_allocation(allocation)
         self.uow.inventory_item_repo.save_inv_items(changed_inv_items)
 
 
@@ -42,7 +42,7 @@ class CartService:
     def _create_cart(self, person_id: str) -> Cart:
         person = self.uow.person_repo.get_person_by_id(person_id)
         cart = Cart.create(person=person)
-        self.uow.cart_repo.save_cart(cart)
+        self.uow.cart_repo.create_cart(cart)
         return cart
 
     def get_or_create_cart(self, person_id: str) -> Cart:
@@ -98,7 +98,7 @@ class OrderService:
             logging.exception("order lines missing %s", order_lines)
             raise
         order.events.append(OrderCreated(order.order_id))
-        self.uow.order_repo.save_order(order)
+        self.uow.order_repo.create_order(order)
         cart.clear_cart()
         self.uow.cart_repo.save_cart(cart)
 

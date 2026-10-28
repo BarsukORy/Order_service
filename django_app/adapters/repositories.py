@@ -1,6 +1,13 @@
+from django.db import IntegrityError
 from django.db.models import Q, Sum, F, Value
 from django.db.models.functions import Coalesce
-from business_logic.domain.exceptions import DomainDoesNotExist, CartDoesNotExist
+from business_logic.domain.exceptions import (DomainDoesNotExist,
+                                              CartDoesNotExist,
+                                              OptimisticLockError,
+                                              CartAlreadyExist,
+                                              OrderDoesNotExist,
+                                              AllocationDoesNotExist,
+                                              AllocationAlreadyExist)
 from business_logic.domain.models import (Person,
                                           Order,
                                           Cart,
@@ -22,7 +29,7 @@ from django_app.models import (PersonModel,
                                OrderModel,
                                InventoryItemModel,
                                ReservedInventoryItemModel,
-                               AllocationModel)
+                               AllocationModel, BaseAggregateModel)
 from django_app.adapters.mappers import (person_to_domain,
                                          product_to_domain,
                                          cart_to_domain,
@@ -38,6 +45,16 @@ def get_object_or_raise_except(model, **filters):
     except model.DoesNotExist as exc:
         entities = ", ".join(f'{k}={v}' for k, v in filters.items())
         raise DomainDoesNotExist(f'{model.__name__} does not exist: {entities}') from exc
+
+
+def apply_optimistic_lock(aggregate_model: type[BaseAggregateModel], current_version: int, **filters):
+    next_version = current_version + 1
+    affected_rows = (aggregate_model.objects
+                     .filter(version_number=current_version, **filters)
+                     .update(version_number=next_version))
+
+    if affected_rows == 0:
+        raise OptimisticLockError()
 
 
 """Раздел магазина."""
@@ -74,15 +91,16 @@ class DjangoProductRepository(AbstractProductRepository):
 
 class DjangoCartRepository(AbstractCartRepository):
 
-    @classmethod
-    def _create_cart(cls, cart: Cart) -> None:
+    def create_cart(self, cart: Cart) -> None:
         person_orm = get_object_or_raise_except(PersonModel, domain_id=cart.person_id)
-        cart_orm = CartModel.objects.create(person=person_orm)
+
+        try:
+            cart_orm = CartModel.objects.create(person=person_orm)
+        except IntegrityError:
+            raise CartAlreadyExist(cart.person_id)
 
         if cart.cart_lines:
-
             model_lines = []
-
             for cart_line in cart.cart_lines.values():
                 product_orm = get_object_or_raise_except(ProductModel, sku=cart_line.product.sku)
                 model_lines.append(
@@ -92,56 +110,74 @@ class DjangoCartRepository(AbstractCartRepository):
                         quantity=cart_line.quantity
                     )
                 )
-
             CartLineModel.objects.bulk_create(model_lines)
+
+        self._add_aggregate_to_seen(cart)
 
     def get_cart_by_person(self, person_id) -> Cart:
         person_orm = get_object_or_raise_except(PersonModel, domain_id=person_id)
-        cart_orm = CartModel.objects.filter(person=person_orm).first()
 
-        if cart_orm is None:
+        try:
+            cart_orm = get_object_or_raise_except(CartModel, person=person_orm)
+        except DomainDoesNotExist:
             raise CartDoesNotExist(person_id)
 
         cart_lines_orm = CartLineModel.objects.filter(cart=cart_orm).select_related('product')
 
-        return cart_to_domain(person_orm, cart_lines_orm)
+        return cart_to_domain(person_orm, cart_orm, cart_lines_orm)
 
-    def save_cart(self, cart: Cart) -> None:
-        self._add(cart)
-        cart_orm = CartModel.objects.filter(person__domain_id=cart.person_id).first()
-
-        if cart_orm is None:
-            self._create_cart(cart)
-            return
-
+    @classmethod
+    def _save_cart_lines(cls, cart: Cart, cart_orm: CartModel) -> None:
         existing_lines = {
             line_orm.product.sku: line_orm
             for line_orm in CartLineModel.objects.filter(cart=cart_orm).select_related('product')
         }
 
         prefer_lines = {
-            line.product.sku: line for line in cart.cart_lines.values()
+            line.product.sku: line
+            for line in cart.cart_lines.values()
         }
 
-        for sku, line_orm in existing_lines.items():
-            if sku not in prefer_lines:
-                line_orm.delete()
+        CartLineModel.objects.filter(cart=cart_orm).exclude(product__sku__in=prefer_lines.keys()).delete()
+
+        line_for_created = []
+        line_for_updated = []
 
         for sku, line in prefer_lines.items():
             if sku not in existing_lines:
                 product_orm = get_object_or_raise_except(ProductModel, sku=sku)
-                CartLineModel.objects.create(cart=cart_orm, product=product_orm, quantity=line.quantity)
+                line_orm_new = CartLineModel(cart=cart_orm, product=product_orm, quantity=line.quantity)
+                line_for_created.append(line_orm_new)
             else:
                 line_orm = existing_lines[sku]
                 if line_orm.quantity != line.quantity:
                     line_orm.quantity = line.quantity
-                    line_orm.save()
+                    line_for_updated.append(line_orm)
+        if line_for_created:
+            CartLineModel.objects.bulk_create(line_for_created)
+        CartLineModel.objects.bulk_update(line_for_updated, fields=['quantity'])
+
+    def save_cart(self, cart: Cart) -> None:
+        try:
+            cart_orm = get_object_or_raise_except(CartModel, person__domain_id=cart.person_id)
+        except DomainDoesNotExist:
+            raise CartDoesNotExist(cart.person_id)
+
+        try:
+            apply_optimistic_lock(CartModel, cart.version_number, person__domain_id=cart.person_id)
+        except OptimisticLockError:
+            raise OptimisticLockError()
+
+        cart_orm.refresh_from_db()
+        self._save_cart_lines(cart, cart_orm)
+
+        cart.increment_version()
+        self._add_aggregate_to_seen(cart)
 
 
 class DjangoOrderRepository(AbstractOrderRepository):
 
-    @classmethod
-    def _create_order(cls, order: Order) -> None:
+    def create_order(self, order: Order) -> None:
         person_orm = get_object_or_raise_except(PersonModel, domain_id=order.person_id)
 
         order_orm = OrderModel.objects.create(
@@ -152,7 +188,6 @@ class DjangoOrderRepository(AbstractOrderRepository):
         )
 
         model_lines = []
-
         for order_line in order.order_lines.values():
             model_lines.append(
                 OrderLineModel(
@@ -163,8 +198,9 @@ class DjangoOrderRepository(AbstractOrderRepository):
                     line_price=order_line.line_price
                 )
             )
-
         OrderLineModel.objects.bulk_create(model_lines)
+
+        self._add_aggregate_to_seen(order)
 
     def get_order_by_id(self, order_id) -> Order:
         order_orm = get_object_or_raise_except(OrderModel, domain_id=order_id)
@@ -173,15 +209,22 @@ class DjangoOrderRepository(AbstractOrderRepository):
 
     def save_order(self, order: Order) -> None:
         """При существующем заказе у него может меняться только поле статуса. """
-        self._add(order)
-        order_orm = OrderModel.objects.filter(domain_id=order.order_id).first()
+        try:
+            order_orm = get_object_or_raise_except(OrderModel, domain_id=order.order_id)
+        except DomainDoesNotExist:
+            raise OrderDoesNotExist(order.order_id)
 
-        if order_orm is None:
-            self._create_order(order)
-            return
+        try:
+            apply_optimistic_lock(OrderModel, order.version_number, order_id=order.order_id)
+        except OptimisticLockError:
+            raise OptimisticLockError()
 
+        order_orm.refresh_from_db()
         order_orm.status = status_to_db(order.status)
         order_orm.save()
+
+        order.increment_version()
+        self._add_aggregate_to_seen(order)
 
 
 """Раздел склада."""
@@ -228,9 +271,12 @@ class DjangoAllocationRepository(AbstractAllocationRepository):
 
         ReservedInventoryItemModel.objects.bulk_update(res_items_orm.values(), fields=['status'])
 
-    @classmethod
-    def _create_allocation(cls, allocation: Allocation) -> None:
-        allocation_orm = AllocationModel.objects.create(order_id=allocation.order_id)
+    def create_allocation(self, allocation: Allocation) -> None:
+        try:
+            allocation_orm = AllocationModel.objects.create(order_id=allocation.order_id)
+        except IntegrityError:
+            raise AllocationAlreadyExist(allocation.order_id)
+
         res_items_orm = []
         for item in allocation.reserved_inv_items:
             res_item = ReservedInventoryItemModel(
@@ -241,8 +287,9 @@ class DjangoAllocationRepository(AbstractAllocationRepository):
                 status=status_to_db(item.status)
             )
             res_items_orm.append(res_item)
-
         ReservedInventoryItemModel.objects.bulk_create(res_items_orm)
+
+        self._add_aggregate_to_seen(allocation)
 
     def get_allocation_by_order_id(self, order_id: str) -> Allocation:
         allocation_orm = get_object_or_raise_except(AllocationModel, order_id=order_id)
@@ -250,11 +297,19 @@ class DjangoAllocationRepository(AbstractAllocationRepository):
         return allocation_to_domain(allocation_orm, res_inv_items_orm)
 
     def save_allocation(self, allocation: Allocation) -> None:
-        self._add(allocation)
-        allocation_orm = AllocationModel.objects.filter(order_id=allocation.order_id).first()
+        try:
+            allocation_orm = get_object_or_raise_except(AllocationModel, order_id=allocation.order_id)
+        except DomainDoesNotExist:
+            raise AllocationDoesNotExist(allocation.order_id)
 
-        if allocation_orm is None:
-            self._create_allocation(allocation)
-            return
+        try:
+            apply_optimistic_lock(AllocationModel, allocation.version_number, order_id=allocation.order_id)
+        except OptimisticLockError:
+            raise OptimisticLockError()
+
+        allocation_orm.refresh_from_db()
 
         self._save_reserved_inventory_items(allocation_orm, allocation.reserved_inv_items)
+
+        allocation.increment_version()
+        self._add_aggregate_to_seen(allocation)

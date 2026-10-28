@@ -56,8 +56,39 @@ class InvalidStatusTransition(DomainException):
         self.new_status = new_status
 
 
-class CartDoesNotExist(DomainException):
+class CartDoesNotExist(DomainDoesNotExist):
     """Корзина отсутствует."""
     def __init__(self, person_id: str):
         super().__init__(f"Cart for this user {person_id} does not exist.")
         self.person_id = person_id
+
+
+class CartAlreadyExist(DomainException):
+    """Корзина для этого пользователя уже существует."""
+    def __init__(self, person_id: str):
+        super().__init__(f"Cart for this user {person_id} already exist.")
+        self.person_id = person_id
+
+
+class OptimisticLockError(DomainException):
+    """Оптимистичная блокировка, т.к. агрегат уже был обновлен."""
+    def __init__(self):
+        super().__init__(f'Optimistic lock error.')
+
+
+class OrderDoesNotExist(DomainDoesNotExist):
+    """Заказа с таким id не существует."""
+    def __init__(self, order_id: str):
+        super().__init__(f"Order {order_id} does not exist.")
+
+
+class AllocationDoesNotExist(DomainDoesNotExist):
+    """Размещения для такого заказа не существует."""
+    def __init__(self, order_id: str):
+        super().__init__(f"Allocation {order_id} does not exist.")
+
+
+class AllocationAlreadyExist(DomainDoesNotExist):
+    """Размещения для такого заказа уже существует."""
+    def __init__(self, order_id: str):
+        super().__init__(f"Allocation {order_id} already exist.")

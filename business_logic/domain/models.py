@@ -15,8 +15,16 @@ from business_logic.domain.exceptions import (TheOrderLinesDoesNotExist,
 
 class BaseAggregate:
 
-    def __init__(self) -> None:
+    def __init__(self, version_number: int) -> None:
         self.events: Deque[Event] = deque()
+        self._version_number = version_number
+
+    @property
+    def version_number(self) -> int:
+        return self._version_number
+
+    def increment_version(self):
+        self._version_number += 1
 
 
 """
@@ -161,9 +169,9 @@ class ReservedInventoryItem:
 
 class Warehouse(BaseAggregate):
 
-    def __init__(self, warehouse_id: str, address: str) -> None:
+    def __init__(self, warehouse_id: str, address: str, version_number: int) -> None:
         """Объекты создаются и получаются через cls-методы: create, restore."""
-        super().__init__()
+        super().__init__(version_number)
         self.id = warehouse_id
         self.address = address
 
@@ -171,14 +179,16 @@ class Warehouse(BaseAggregate):
     def create(cls, address: str) -> "Warehouse":
         return cls(
             warehouse_id=str(uuid.uuid4()),
-            address=address
+            address=address,
+            version_number=0
         )
 
     @classmethod
-    def restore(cls, warehouse_id: str, address: str) -> "Warehouse":
+    def restore(cls, warehouse_id: str, address: str, version_number: int) -> "Warehouse":
         return cls(
             warehouse_id=warehouse_id,
-            address=address
+            address=address,
+            version_number=version_number
         )
 
 
@@ -187,9 +197,10 @@ class Allocation(BaseAggregate):
     def __init__(
             self,
             order_id: str,
-            reserved_inv_items: List[ReservedInventoryItem]):
+            reserved_inv_items: List[ReservedInventoryItem],
+            version_number: int):
         """Объекты создаются и получаются через cls-методы: place, restore."""
-        super().__init__()
+        super().__init__(version_number)
         self._order_id = order_id
         self._reserved_inv_items = reserved_inv_items
 
@@ -245,16 +256,18 @@ class Allocation(BaseAggregate):
             if quan > 0:
                 raise InsufficientStockInTheWarehouse(sku)
 
-        return cls(order_id=order_id, reserved_inv_items=reserved_inv_items), changed_inv_items
+        return cls(order_id=order_id, reserved_inv_items=reserved_inv_items, version_number=0), changed_inv_items
 
     @classmethod
     def restore(
             cls,
             order_id: str,
-            reserved_inv_items: List[ReservedInventoryItem]) -> "Allocation":
+            reserved_inv_items: List[ReservedInventoryItem],
+            version_number: int) -> "Allocation":
         return cls(
             order_id=order_id,
             reserved_inv_items=reserved_inv_items,
+            version_number=version_number
         )
 
     def ship_items(
@@ -358,9 +371,13 @@ class CartLine:
 
 class Cart(BaseAggregate):
 
-    def __init__(self, person: Person, cart_lines: dict[str, CartLine]):
+    def __init__(
+            self,
+            person: Person,
+            cart_lines: dict[str, CartLine],
+            version_number: int):
         """Объекты создаются и получаются через cls-методы: create, restore."""
-        super().__init__()
+        super().__init__(version_number)
         self._person = person
         self._cart_lines = cart_lines
 
@@ -368,14 +385,16 @@ class Cart(BaseAggregate):
     def create(cls, person: Person):
         return cls(
             person=person,
-            cart_lines=dict()
+            cart_lines=dict(),
+            version_number=0
         )
 
     @classmethod
-    def restore(cls, person: Person, cart_lines: dict[str, CartLine]):
+    def restore(cls, person: Person, cart_lines: dict[str, CartLine], version_number: int):
         return cls(
             person=person,
-            cart_lines=cart_lines
+            cart_lines=cart_lines,
+            version_number=version_number
         )
 
     @property
@@ -461,9 +480,10 @@ class Order(BaseAggregate):
             person: Person,
             order_lines: dict[str, OrderLine],
             final_price: Decimal,
-            status: OrderStatus):
+            status: OrderStatus,
+            version_number: int):
         """Объекты создаются и получаются через cls-методы: create, restore."""
-        super().__init__()
+        super().__init__(version_number)
 
         if not order_lines:
             raise TheOrderLinesDoesNotExist()
@@ -484,7 +504,8 @@ class Order(BaseAggregate):
             person=person,
             order_lines=order_lines,
             final_price=cls.calculate_final_price(order_lines),
-            status=cls.OrderStatus.in_progress
+            status=cls.OrderStatus.in_progress,
+            version_number=0
         )
 
     @classmethod
@@ -494,13 +515,15 @@ class Order(BaseAggregate):
             person: Person,
             order_lines: dict[str, OrderLine],
             final_price: Decimal,
-            status: OrderStatus) -> "Order":
+            status: OrderStatus,
+            version_number: int) -> "Order":
         return cls(
             order_id=order_id,
             person=person,
             order_lines=order_lines,
             final_price=final_price,
-            status=status
+            status=status,
+            version_number=version_number
         )
 
     @property
