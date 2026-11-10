@@ -3,7 +3,7 @@ import uuid
 from collections import deque
 from dataclasses import dataclass, replace
 from decimal import Decimal
-from typing import Iterable, List, Deque
+from typing import Deque, Any
 from types import MappingProxyType
 from business_logic.domain.events import Event
 from business_logic.domain.exceptions import (TheOrderLinesDoesNotExist,
@@ -15,8 +15,29 @@ from business_logic.domain.exceptions import (TheOrderLinesDoesNotExist,
 
 class BaseAggregate:
 
-    def __init__(self) -> None:
+    def __init__(self, version_number: int) -> None:
         self.events: Deque[Event] = deque()
+        self._version_number = version_number
+
+    @property
+    def version_number(self) -> int:
+        return self._version_number
+
+    def increment_version(self) -> None:
+        self._version_number += 1
+
+
+def check_positive(obj: Any, value: int | Decimal) -> None:
+    if value <= 0:
+        raise InvalidValueForTheOperation(obj, value)
+
+
+def transition_to_new_status(
+        old_status: enum.Enum,
+        new_status: enum.Enum,
+        status_lifecycle: dict[enum.Enum, tuple[enum.Enum, ...]]) -> None:
+    if new_status not in status_lifecycle[old_status]:
+        raise InvalidStatusTransition(old_status, new_status)
 
 
 """
@@ -24,65 +45,104 @@ class BaseAggregate:
 """
 
 
-@dataclass(frozen=True)
-class InventoryItem:
-    sku: str
-    warehouse_id: str
-    physical_quantity: int
-    reserved_quantity: int
+class InventoryItem(BaseAggregate):
 
-    def __post_init__(self):
-        if self.physical_quantity < 0:
+    def __init__(
+            self,
+            sku: str,
+            warehouse_id: str,
+            physical_quantity: int,
+            reserved_quantity: int,
+            version_number: int) -> None:
+        """Объекты создаются и получаются через cls-методы: create, restore."""
+        super().__init__(version_number)
+
+        if physical_quantity < 0:
             raise ValueError("The physical quantity value must be greater or equal zero.")
-        if self.reserved_quantity < 0:
+        if reserved_quantity < 0:
             raise ValueError("The reserved quantity value must be greater or equal zero.")
-        if self.reserved_quantity > self.physical_quantity:
+        if reserved_quantity > physical_quantity:
             raise ValueError("The reserved quantity value must be less than the physical quantity.")
+
+        self._sku = sku
+        self._warehouse_id = warehouse_id
+        self._physical_quantity = physical_quantity
+        self._reserved_quantity = reserved_quantity
+
+    @classmethod
+    def create(
+            cls,
+            sku: str,
+            warehouse_id: str,
+            physical_quantity: int) -> "InventoryItem":
+        return cls(
+            sku=sku,
+            warehouse_id=warehouse_id,
+            physical_quantity=physical_quantity,
+            reserved_quantity=0,
+            version_number=0
+        )
+
+    @classmethod
+    def restore(
+            cls,
+            sku: str,
+            warehouse_id: str,
+            physical_quantity: int,
+            reserved_quantity: int,
+            version_number: int) -> "InventoryItem":
+        return cls(
+            sku=sku,
+            warehouse_id=warehouse_id,
+            physical_quantity=physical_quantity,
+            reserved_quantity=reserved_quantity,
+            version_number=version_number
+        )
 
     @property
     def key(self) -> tuple[str, str]:
-        return self.sku, self.warehouse_id
+        return self._sku, self._warehouse_id
 
     @property
     def available_quantity(self) -> int:
-        return self.physical_quantity - self.reserved_quantity
+        return self._physical_quantity - self._reserved_quantity
 
-    def increase_quantity(self, quantity: int) -> "InventoryItem":
-        self._check_positive(self, quantity)
-        return replace(self, physical_quantity=self.physical_quantity + quantity)
+    @property
+    def physical_quantity(self) -> int:
+        return self._physical_quantity
 
-    def decrease_quantity(self, quantity: int) -> "InventoryItem":
-        self._check_positive(self, quantity)
-        if not self.physical_quantity >= quantity:
+    @property
+    def reserved_quantity(self) -> int:
+        return self._reserved_quantity
+
+    def increase_quantity(self, quantity: int) -> None:
+        check_positive(self, quantity)
+        self._physical_quantity += quantity
+
+    def decrease_quantity(self, quantity: int) -> None:
+        check_positive(self, quantity)
+        if quantity > self._physical_quantity:
             raise InvalidValueForTheOperation(self, quantity)
-        return replace(self, physical_quantity=self.physical_quantity - quantity)
+        self._physical_quantity -= quantity
 
-    def reserve(self, quantity: int) -> "InventoryItem":
-        self._check_positive(self, quantity)
+    def reserve(self, quantity: int) -> None:
+        check_positive(self, quantity)
         if quantity > self.available_quantity:
             raise InvalidValueForTheOperation(self, quantity)
-        return replace(self, reserved_quantity=self.reserved_quantity + quantity)
+        self._reserved_quantity += quantity
 
-    def cancel_reserve(self, quantity: int) -> "InventoryItem":
-        self._check_positive(self, quantity)
-        if quantity > self.reserved_quantity:
+    def cancel_reserve(self, quantity: int) -> None:
+        check_positive(self, quantity)
+        if quantity > self._reserved_quantity:
             raise InvalidValueForTheOperation(self, quantity)
-        return replace(self, reserved_quantity=self.reserved_quantity - quantity)
+        self._reserved_quantity -= quantity
 
-    def shipment(self, quantity: int) -> "InventoryItem":
-        self._check_positive(self, quantity)
-        if quantity > self.reserved_quantity:
+    def shipment(self, quantity: int) -> None:
+        check_positive(self, quantity)
+        if quantity > self._reserved_quantity:
             raise InvalidValueForTheOperation(self, quantity)
-        return replace(
-            self,
-            physical_quantity=self.physical_quantity - quantity,
-            reserved_quantity=self.reserved_quantity - quantity
-        )
-
-    @staticmethod
-    def _check_positive(obj: "InventoryItem", value: int) -> None:
-        if value <= 0:
-            raise InvalidValueForTheOperation(obj, value)
+        self._physical_quantity -= quantity
+        self._reserved_quantity -= quantity
 
 
 @dataclass(frozen=True)
@@ -137,7 +197,7 @@ class ReservedInventoryItem:
         )
 
     def __post_init__(self):
-        if self.quantity < 0:
+        if self.quantity <= 0:
             raise ValueError("The quantity value must be greater zero.")
 
     @property
@@ -145,41 +205,20 @@ class ReservedInventoryItem:
         return self.sku, self.warehouse_id
 
     def _transition_to_new_status(self, status: ReservedInventoryItemStatus) -> "ReservedInventoryItem":
-        if status not in self._STATUS_LIFECYCLE[self.status]:
-            raise InvalidStatusTransition(self.status, status)
-        return replace(self, status=status)
+        try:
+            transition_to_new_status(self.status, status, self._STATUS_LIFECYCLE)
+            return replace(self, status=status)
+        except InvalidStatusTransition:
+            raise
 
-    def shipped_status(self):
+    def shipped_status(self) -> "ReservedInventoryItem":
         return self._transition_to_new_status(self.ReservedInventoryItemStatus.shipped)
 
-    def cancelled_status(self):
+    def cancelled_status(self) -> "ReservedInventoryItem":
         return self._transition_to_new_status(self.ReservedInventoryItemStatus.cancelled)
 
-    def returned_status(self):
+    def returned_status(self) -> "ReservedInventoryItem":
         return self._transition_to_new_status(self.ReservedInventoryItemStatus.returned)
-
-
-class Warehouse(BaseAggregate):
-
-    def __init__(self, warehouse_id: str, address: str) -> None:
-        """Объекты создаются и получаются через cls-методы: create, restore."""
-        super().__init__()
-        self.id = warehouse_id
-        self.address = address
-
-    @classmethod
-    def create(cls, address: str) -> "Warehouse":
-        return cls(
-            warehouse_id=str(uuid.uuid4()),
-            address=address
-        )
-
-    @classmethod
-    def restore(cls, warehouse_id: str, address: str) -> "Warehouse":
-        return cls(
-            warehouse_id=warehouse_id,
-            address=address
-        )
 
 
 class Allocation(BaseAggregate):
@@ -187,9 +226,10 @@ class Allocation(BaseAggregate):
     def __init__(
             self,
             order_id: str,
-            reserved_inv_items: List[ReservedInventoryItem]):
-        """Объекты создаются и получаются через cls-методы: place, restore."""
-        super().__init__()
+            reserved_inv_items: list[ReservedInventoryItem],
+            version_number: int):
+        """Объекты создаются и получаются через cls-методы: create, restore."""
+        super().__init__(version_number)
         self._order_id = order_id
         self._reserved_inv_items = reserved_inv_items
 
@@ -198,94 +238,83 @@ class Allocation(BaseAggregate):
         return self._order_id
 
     @property
-    def reserved_inv_items(self):
+    def reserved_inv_items(self) -> tuple[ReservedInventoryItem, ...]:
         return tuple(self._reserved_inv_items)
 
+    @property
+    def reserved_quantity_for_key(self) -> dict[tuple[str, str], int]:
+        return {(item.sku, item.warehouse_id): item.quantity for item in self._reserved_inv_items}
+
     @classmethod
-    def place(
+    def create(
             cls,
             order_id: str,
             required_items: dict[str, int],
-            inv_items_list: dict[tuple[str, str], InventoryItem]
-    ) -> tuple["Allocation", dict[tuple[str, str], InventoryItem]]:
+            inv_items_list: dict[tuple[str, str], int]) -> "Allocation":
 
-        reserved_inv_items: List[ReservedInventoryItem] = []
-        changed_inv_items: dict[tuple[str, str], InventoryItem] = dict()
+        reserved_inv_items: list[ReservedInventoryItem] = []
 
         for sku, quan in required_items.items():
-            inv_items = [
-                inv_item for (key_sku, key_warehouse_id), inv_item in inv_items_list.items()
+            inv_items = {
+                (key_sku, key_warehouse_id): available_quan
+                for (key_sku, key_warehouse_id), available_quan in inv_items_list.items()
                 if key_sku == sku
-            ]
+            }
 
             """Политика сортировки."""
-            inv_items = sorted(inv_items, key=lambda items: items.available_quantity)
+            inv_items = dict(sorted(inv_items.items(), key=lambda inv_item: inv_item[1]))
 
-            for item in inv_items:
-                if item.available_quantity >= quan:
+            for (key_sku, key_warehouse_id), available_quan in inv_items.items():
+                if available_quan >= quan:
                     res_item = ReservedInventoryItem.create(
-                        sku=sku,
-                        warehouse_id=item.warehouse_id,
+                        sku=key_sku,
+                        warehouse_id=key_warehouse_id,
                         quantity=quan
                     )
-                    changed_inv_items[item.key] = item.reserve(quan)
                     reserved_inv_items.append(res_item)
                     quan = 0
                     break
-                elif 0 < item.available_quantity < quan:
-                    temp_quan = item.available_quantity
+                elif 0 < available_quan < quan:
                     res_item = ReservedInventoryItem.create(
-                        sku=sku,
-                        warehouse_id=item.warehouse_id,
-                        quantity=temp_quan
+                        sku=key_sku,
+                        warehouse_id=key_warehouse_id,
+                        quantity=available_quan
                     )
-                    changed_inv_items[item.key] = item.reserve(temp_quan)
-                    quan -= temp_quan
+                    quan -= available_quan
                     reserved_inv_items.append(res_item)
+
             if quan > 0:
                 raise InsufficientStockInTheWarehouse(sku)
 
-        return cls(order_id=order_id, reserved_inv_items=reserved_inv_items), changed_inv_items
+        return cls(
+            order_id=order_id,
+            reserved_inv_items=reserved_inv_items,
+            version_number=0
+        )
 
     @classmethod
     def restore(
             cls,
             order_id: str,
-            reserved_inv_items: List[ReservedInventoryItem]) -> "Allocation":
+            reserved_inv_items: list[ReservedInventoryItem],
+            version_number: int) -> "Allocation":
         return cls(
             order_id=order_id,
             reserved_inv_items=reserved_inv_items,
+            version_number=version_number
         )
 
-    def ship_items(
-            self,
-            inv_items: dict[tuple[str, str], InventoryItem]) -> dict[tuple[str, str], InventoryItem]:
+    # def ship_items(self) -> None:
+    #     for i, res_item in enumerate(self.reserved_inv_items):
+    #         self._reserved_inv_items[i] = self._reserved_inv_items[i].shipped_status()
+    #
+    # def cancel_items_reservation(self) -> None:
+    #     for i, res_item in enumerate(self.reserved_inv_items):
+    #         self._reserved_inv_items[i] = res_item.cancelled_status()
 
-        for i, res_item in enumerate(self.reserved_inv_items):
-            self._reserved_inv_items[i] = self._reserved_inv_items[i].shipped_status()
-            inv_items[res_item.key] = inv_items[res_item.key].shipment(res_item.quantity)
-
-        return inv_items
-
-    def cancel_items_reservation(
-            self,
-            inv_items: dict[tuple[str, str], InventoryItem]) -> dict[tuple[str, str], InventoryItem]:
-
-        for i, res_item in enumerate(self.reserved_inv_items):
-            self._reserved_inv_items[i] = res_item.cancelled_status()
-            inv_items[res_item.key] = inv_items[res_item.key].cancel_reserve(res_item.quantity)
-
-        return inv_items
-
-    def return_items(
-            self,
-            inv_items: dict[tuple[str, str], InventoryItem]) -> dict[tuple[str, str], InventoryItem]:
-
-        for i, res_item in enumerate(self.reserved_inv_items):
-            self._reserved_inv_items[i] = res_item.returned_status()
-            inv_items[res_item.key] = inv_items[res_item.key].increase_quantity(res_item.quantity)
-
-        return inv_items
+    # def return_items(self) -> None:
+    #     for i, res_item in enumerate(self.reserved_inv_items):
+    #         self._reserved_inv_items[i] = res_item.returned_status()
 
 
 """
@@ -312,19 +341,14 @@ class Product:
             raise ValueError("Unit price must be greater than zero")
 
     def increase_price(self, price: Decimal) -> "Product":
-        self._check_positive(self, price)
+        check_positive(self, price)
         return replace(self, unit_price=self.unit_price + price)
 
     def decrease_price(self, price: Decimal) -> "Product":
-        self._check_positive(self, price)
+        check_positive(self, price)
         if self.unit_price - price <= 0:
-            raise ValueError("The result unit_price value must be greater than zero.")
+            raise InvalidValueForTheOperation(self, price)
         return replace(self, unit_price=self.unit_price - price)
-
-    @staticmethod
-    def _check_positive(obj: "Product", value: Decimal) -> None:
-        if value <= 0:
-            raise InvalidValueForTheOperation(obj, value)
 
 
 @dataclass(frozen=True)
@@ -341,49 +365,54 @@ class CartLine:
             raise ValueError("The quantity value must be greater than zero.")
 
     def increase_quantity(self, quantity: int) -> "CartLine":
-        self._check_positive(self, quantity)
+        check_positive(self, quantity)
         return replace(self, quantity=self.quantity + quantity)
 
     def decrease_quantity(self, quantity: int) -> "CartLine":
-        self._check_positive(self, quantity)
+        check_positive(self, quantity)
         if self.quantity - quantity <= 0:
-            raise ValueError("The result quantity value must be greater than zero.")
+            raise InvalidValueForTheOperation(self, quantity)
         return replace(self, quantity=self.quantity - quantity)
-
-    @staticmethod
-    def _check_positive(obj: 'CartLine', value: int) -> None:
-        if value <= 0:
-            raise InvalidValueForTheOperation(obj, value)
 
 
 class Cart(BaseAggregate):
 
-    def __init__(self, person: Person, cart_lines: dict[str, CartLine]):
+    def __init__(
+            self,
+            person: Person,
+            cart_lines: dict[str, CartLine],
+            version_number: int):
         """Объекты создаются и получаются через cls-методы: create, restore."""
-        super().__init__()
+        super().__init__(version_number)
         self._person = person
         self._cart_lines = cart_lines
 
     @classmethod
-    def create(cls, person: Person):
+    def create(cls, person: Person) -> "Cart":
         return cls(
             person=person,
-            cart_lines=dict()
+            cart_lines=dict(),
+            version_number=0
         )
 
     @classmethod
-    def restore(cls, person: Person, cart_lines: dict[str, CartLine]):
+    def restore(
+            cls,
+            person: Person,
+            cart_lines: dict[str, CartLine],
+            version_number: int) -> "Cart":
         return cls(
             person=person,
-            cart_lines=cart_lines
+            cart_lines=cart_lines,
+            version_number=version_number
         )
 
     @property
-    def person_id(self) -> str:
-        return self._person.person_id
+    def person(self) -> Person:
+        return self._person
 
     @property
-    def all_sku(self) -> Iterable[str]:
+    def all_sku(self) -> list[str]:
         return list(self._cart_lines.keys())
 
     @property
@@ -461,9 +490,10 @@ class Order(BaseAggregate):
             person: Person,
             order_lines: dict[str, OrderLine],
             final_price: Decimal,
-            status: OrderStatus):
+            status: OrderStatus,
+            version_number: int):
         """Объекты создаются и получаются через cls-методы: create, restore."""
-        super().__init__()
+        super().__init__(version_number)
 
         if not order_lines:
             raise TheOrderLinesDoesNotExist()
@@ -484,7 +514,8 @@ class Order(BaseAggregate):
             person=person,
             order_lines=order_lines,
             final_price=cls.calculate_final_price(order_lines),
-            status=cls.OrderStatus.in_progress
+            status=cls.OrderStatus.in_progress,
+            version_number=0
         )
 
     @classmethod
@@ -494,13 +525,15 @@ class Order(BaseAggregate):
             person: Person,
             order_lines: dict[str, OrderLine],
             final_price: Decimal,
-            status: OrderStatus) -> "Order":
+            status: OrderStatus,
+            version_number: int) -> "Order":
         return cls(
             order_id=order_id,
             person=person,
             order_lines=order_lines,
             final_price=final_price,
-            status=status
+            status=status,
+            version_number=version_number
         )
 
     @property
@@ -536,18 +569,20 @@ class Order(BaseAggregate):
         return Decimal(sum(line.line_price for line in order_lines.values()))
 
     def _transition_to_new_status(self, status: OrderStatus) -> None:
-        if status not in self._STATUS_LIFECYCLE[self._status]:
-            raise InvalidStatusTransition(self._status, status)
-        self._status = status
+        try:
+            transition_to_new_status(self._status, status, self._STATUS_LIFECYCLE)
+            self._status = status
+        except InvalidStatusTransition:
+            raise
 
-    def en_route_order(self):
+    def en_route_order(self) -> None:
         self._transition_to_new_status(self.OrderStatus.en_route)
 
-    def cancel_order(self):
+    def cancel_order(self) -> None:
         self._transition_to_new_status(self.OrderStatus.cancelled)
 
-    def deliver_order(self):
+    def deliver_order(self) -> None:
         self._transition_to_new_status(self.OrderStatus.delivered)
 
-    def return_order(self):
+    def return_order(self) -> None:
         self._transition_to_new_status(self.OrderStatus.returned)

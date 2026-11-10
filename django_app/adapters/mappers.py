@@ -15,7 +15,8 @@ from django_app.models import (PersonModel,
                                OrderModel,
                                InventoryItemModel,
                                ReservedInventoryItemModel,
-                               AllocationModel)
+                               AllocationModel,
+                               CartModel)
 
 
 def person_to_domain(person_orm: PersonModel) -> Person:
@@ -42,7 +43,11 @@ def cart_line_to_domain(cart_line_orm: CartLineModel) -> CartLine:
     )
 
 
-def cart_to_domain(person_orm: PersonModel, cart_lines_orm: Iterable[CartLineModel] = None) -> Cart:
+def cart_to_domain(
+        person_orm: PersonModel,
+        cart_orm: CartModel,
+        cart_lines_orm: Iterable[CartLineModel] = None) -> Cart:
+
     if cart_lines_orm is None:
         cart_lines_dm = dict()
     else:
@@ -52,7 +57,8 @@ def cart_to_domain(person_orm: PersonModel, cart_lines_orm: Iterable[CartLineMod
         }
     return Cart.restore(
         person=person_to_domain(person_orm),
-        cart_lines=cart_lines_dm
+        cart_lines=cart_lines_dm,
+        version_number=cart_orm.version_number
     )
 
 
@@ -75,7 +81,8 @@ def order_to_domain(order_orm: OrderModel, order_lines_orm: Iterable[OrderLineMo
         person=person_to_domain(order_orm.person),
         order_lines=order_lines_dm,
         final_price=order_orm.final_price,
-        status=Order.OrderStatus[order_orm.status]
+        status=Order.OrderStatus[order_orm.status],
+        version_number=order_orm.version_number
     )
 
 
@@ -83,11 +90,12 @@ def order_to_domain(order_orm: OrderModel, order_lines_orm: Iterable[OrderLineMo
 
 
 def inventory_item_to_domain(inventory_item_orm: InventoryItemModel) -> InventoryItem:
-    return InventoryItem(
+    return InventoryItem.restore(
         sku=inventory_item_orm.sku,
         warehouse_id=inventory_item_orm.warehouse_id,
         physical_quantity=inventory_item_orm.physical_quantity,
-        reserved_quantity=inventory_item_orm.reserved_quantity
+        reserved_quantity=inventory_item_orm.reserved_quantity,
+        version_number=inventory_item_orm.version_number
     )
 
 
@@ -114,7 +122,8 @@ def allocation_to_domain(
     reserved_inventory_items = [reserved_inventory_item_to_domain(inv_item) for inv_item in res_inv_items_orm]
     return Allocation.restore(
         order_id=allocation_orm.order_id,
-        reserved_inv_items=reserved_inventory_items
+        reserved_inv_items=reserved_inventory_items,
+        version_number=allocation_orm.version_number
     )
 
 

@@ -1,4 +1,6 @@
+from collections import deque
 from abc import ABC, abstractmethod
+from typing import Deque
 from business_logic.domain.models import (Person,
                                           Product,
                                           Cart,
@@ -16,10 +18,10 @@ class AbstractAggregateRepository(AbstractRepository):
 
     def __init__(self):
         super().__init__()
-        self.seen: set[BaseAggregate] = set()
+        self.seen: Deque[BaseAggregate] = deque()
 
-    def _add(self, aggregate: BaseAggregate):
-        self.seen.add(aggregate)
+    def _add_aggregate_to_seen(self, aggregate: BaseAggregate) -> None:
+        self.seen.append(aggregate)
 
 
 """Раздел магазина."""
@@ -48,10 +50,10 @@ class AbstractProductRepository(AbstractRepository):
 
 
 class AbstractCartRepository(AbstractAggregateRepository):
-    """
-    Адаптер также должен реализовать внутренний метод создания корзины:
-    def _create_cart(cls, cart: Cart) -> None
-    """
+
+    @abstractmethod
+    def create_cart(self, cart: Cart) -> None:
+        raise NotImplementedError
 
     @abstractmethod
     def get_cart_by_person(self, person_id: str) -> Cart:
@@ -63,10 +65,10 @@ class AbstractCartRepository(AbstractAggregateRepository):
 
 
 class AbstractOrderRepository(AbstractAggregateRepository):
-    """
-    Адаптер также должен реализовать внутренний метод создания заказа:
-    def _create_order(cls, order: Order) -> None
-    """
+
+    @abstractmethod
+    def create_order(self, order: Order) -> None:
+        raise NotImplementedError
 
     @abstractmethod
     def save_order(self, order: Order) -> None:
@@ -80,7 +82,7 @@ class AbstractOrderRepository(AbstractAggregateRepository):
 """Раздел Склада."""
 
 
-class AbstractInventoryItemRepository(AbstractRepository):
+class AbstractInventoryItemRepository(AbstractAggregateRepository):
 
     @abstractmethod
     def get_inv_items_by_sku(self, sku_list: list[str]) -> dict[tuple[str, str], InventoryItem]:
@@ -96,14 +98,10 @@ class AbstractInventoryItemRepository(AbstractRepository):
 
 
 class AbstractAllocationRepository(AbstractAggregateRepository):
-    """
-    Адаптер также должен реализовать внутренний метод для сохранения товаров:
-    def _save_reserved_inventory_items(
-                    cls,
-                    allocation_orm: AllocationModel,
-                    reserved_inventory_items: tuple[ReservedInventoryItem]) -> None:
-    def _create_allocation(cls, allocation: Allocation) -> None:
-    """
+
+    @abstractmethod
+    def create_allocation(self, allocation: Allocation) -> None:
+        raise NotImplementedError
 
     @abstractmethod
     def get_allocation_by_order_id(self, order_id: str) -> Allocation:
