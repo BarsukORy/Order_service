@@ -2,14 +2,18 @@ from typing import Callable
 from business_logic.domain.commands import Command, CreateOrderCommand, CancelOrderCommand
 from business_logic.domain.events import Event, OrderCreated, OrderAllocated
 from business_logic.service_layer.uow import AbstractUnitOfWork
-from business_logic.service_layer.use_cases import OrderService, InventoryItemService
+from business_logic.service_layer.use_cases import OrderService, AllocationService, InventoryItemService
 
 
 def create_order_handler(cmd: CreateOrderCommand, uow: AbstractUnitOfWork):
     with uow:
-        order = OrderService(cmd.person_id, uow).place_order()
-        item = InventoryItemService(uow)
-        item.reserve_item(order)
+        order_service = OrderService(cmd.person_id, uow)
+        inventory_item_service = InventoryItemService(uow)
+        allocation_service = AllocationService(uow, inventory_item_service)
+
+        order = order_service.place_order()
+        allocation_service.place_allocation(order)
+
         uow.commit()
 
 

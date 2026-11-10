@@ -1,4 +1,3 @@
-import logging
 from abc import ABC, abstractmethod
 from collections import deque
 from typing import Callable, Union, Deque
@@ -51,7 +50,6 @@ class MessageBus(AbstractMessageBus):
                 raise Exception(f'{message} was not an Event or Command')
 
     def handle_commands(self, command: Command, queue: Deque[Message], uow: AbstractUnitOfWork) -> None:
-        logging.debug(f'Handling command: {command}')
         try:
             handler = self.handlers_command.get(type(command))
             if handler is None:
@@ -60,7 +58,6 @@ class MessageBus(AbstractMessageBus):
                 handler(command, uow)
                 queue.extend(uow.collect_new_messages())
         except Exception as e:
-            logging.error(e)
             raise e
 
     def handle_events(self, event: Event, queue: Deque[Message], uow: AbstractUnitOfWork) -> None:
@@ -68,10 +65,7 @@ class MessageBus(AbstractMessageBus):
             try:
                 for attempt in Retrying(stop=stop_after_attempt(3), wait=wait_exponential()):
                     with attempt:
-                        logging.debug('handling event %s with handler %s', event, handler)
                         handler(event)
                         queue.extend(uow.collect_new_messages())
-            except RetryError as retry_ex:
-                logging.error('Failed to process the event %s once, refusal!',
-                              retry_ex.last_attempt.attempt_number)
+            except RetryError:
                 continue

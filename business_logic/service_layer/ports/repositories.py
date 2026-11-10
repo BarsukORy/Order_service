@@ -1,4 +1,6 @@
+from collections import deque
 from abc import ABC, abstractmethod
+from typing import Deque
 from business_logic.domain.models import (Person,
                                           Product,
                                           Cart,
@@ -16,10 +18,10 @@ class AbstractAggregateRepository(AbstractRepository):
 
     def __init__(self):
         super().__init__()
-        self.seen: set[BaseAggregate] = set()
+        self.seen: Deque[BaseAggregate] = deque()
 
-    def _add_aggregate_to_seen(self, aggregate: BaseAggregate):
-        self.seen.add(aggregate)
+    def _add_aggregate_to_seen(self, aggregate: BaseAggregate) -> None:
+        self.seen.append(aggregate)
 
 
 """Раздел магазина."""
@@ -48,10 +50,7 @@ class AbstractProductRepository(AbstractRepository):
 
 
 class AbstractCartRepository(AbstractAggregateRepository):
-    """
-    Адаптер также должен реализовать внутренний метод для сохранения товаров:
-        def _save_cart_lines(cls, cart: Cart, cart_orm: CartModel) -> None:
-    """
+
     @abstractmethod
     def create_cart(self, cart: Cart) -> None:
         raise NotImplementedError
@@ -83,7 +82,7 @@ class AbstractOrderRepository(AbstractAggregateRepository):
 """Раздел Склада."""
 
 
-class AbstractInventoryItemRepository(AbstractRepository):
+class AbstractInventoryItemRepository(AbstractAggregateRepository):
 
     @abstractmethod
     def get_inv_items_by_sku(self, sku_list: list[str]) -> dict[tuple[str, str], InventoryItem]:
@@ -99,13 +98,7 @@ class AbstractInventoryItemRepository(AbstractRepository):
 
 
 class AbstractAllocationRepository(AbstractAggregateRepository):
-    """
-    Адаптер также должен реализовать внутренний метод для сохранения товаров:
-    def _save_reserved_inventory_items(
-                    cls,
-                    allocation_orm: AllocationModel,
-                    reserved_inventory_items: tuple[ReservedInventoryItem]) -> None:
-    """
+
     @abstractmethod
     def create_allocation(self, allocation: Allocation) -> None:
         raise NotImplementedError

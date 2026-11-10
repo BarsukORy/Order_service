@@ -7,6 +7,9 @@ from business_logic.domain.models import Order, ReservedInventoryItem
 class BaseAggregateModel(models.Model):
     version_number = models.IntegerField(default=0)
 
+    class Meta:
+        abstract = True
+
 
 """Раздел магазина."""
 
@@ -96,7 +99,7 @@ class OrderLineModel(models.Model):
 """Раздел склада."""
 
 
-class InventoryItemModel(models.Model):
+class InventoryItemModel(BaseAggregateModel):
     sku = models.CharField(max_length=50)
     warehouse_id = models.CharField(max_length=50)
     physical_quantity = models.IntegerField()

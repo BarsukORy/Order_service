@@ -1,4 +1,3 @@
-import logging
 from business_logic.domain.events import OrderCreated, OrderAllocated
 from business_logic.domain.models import (OrderLine,
                                           Order,
@@ -19,19 +18,38 @@ class InventoryItemService:
         inv_items = self.uow.inventory_item_repo.get_available_quantity_items_by_sku(list(required_items.keys()))
         for sku, quan in required_items.items():
             item_quan = inv_items.get(sku, 0)
-            if quan < item_quan or item_quan == 0:
+            if quan > item_quan or item_quan == 0:
                 return False
         return True
 
     def get_items(self, required_items: list[str]) -> dict[tuple[str, str], InventoryItem]:
         return self.uow.inventory_item_repo.get_inv_items_by_sku(required_items)
 
-    def reserve_item(self, order: Order):
-        allocation, changed_inv_items = (
-            Allocation.place(order.order_id, order.quantity_for_sku, self.get_items(order.all_sku)))
+    def get_items_for_update(self, required_items: list[str]) -> dict[tuple[str, str], InventoryItem]:
+        return self.uow.inventory_item_repo.get_inv_items_by_sku(required_items)
+
+    def reserve_item(self, items_for_reserve: dict[tuple[str, str], int]) -> None:
+        inv_items = self.get_items([keys[0] for keys in items_for_reserve.keys()])
+        for (sku, wh_id), quan in items_for_reserve.items():
+            inv_items[(sku, wh_id)].reserve(quan)
+        self.uow.inventory_item_repo.save_inv_items(inv_items)
+
+
+class AllocationService:
+
+    def __init__(self, uow: AbstractUnitOfWork, inventory_item_service: InventoryItemService):
+        self.uow = uow
+        self.inventory_item_service = inventory_item_service
+
+    def place_allocation(self, order: Order):
+        inventory_items = self.inventory_item_service.get_items_for_update(order.all_sku)
+        inventory_items = {(sku, wh_id): item.available_quantity for (sku, wh_id), item in inventory_items.items()}
+
+        allocation = Allocation.create(order.order_id, order.quantity_for_sku, inventory_items)
         allocation.events.append(OrderAllocated(allocation.order_id))
         self.uow.allocation_repo.create_allocation(allocation)
-        self.uow.inventory_item_repo.save_inv_items(changed_inv_items)
+
+        self.inventory_item_service.reserve_item(allocation.reserved_quantity_for_key)
 
 
 class CartService:
@@ -50,7 +68,6 @@ class CartService:
             cart = self.uow.cart_repo.get_cart_by_person(person_id)
         except CartDoesNotExist:
             cart = self._create_cart(person_id)
-            logging.exception("cart missing for person %s", person_id)
         return cart
 
 
@@ -80,23 +97,22 @@ class OrderService:
 
         return order_lines
 
-    def place_order(self):
+    def place_order(self) -> Order:
         try:
             cart = self.uow.cart_repo.get_cart_by_person(self.person_id)
         except CartDoesNotExist:
-            logging.exception("cart missing for person %s", self.person_id)
             raise
 
         order_lines = self._generate_order_lines(cart)
 
         try:
             order = Order.create(
-                person=self.uow.person_repo.get_person_by_id(self.person_id),
+                person=cart.person,
                 order_lines=order_lines
             )
         except TheOrderLinesDoesNotExist:
-            logging.exception("order lines missing %s", order_lines)
             raise
+
         order.events.append(OrderCreated(order.order_id))
         self.uow.order_repo.create_order(order)
         cart.clear_cart()

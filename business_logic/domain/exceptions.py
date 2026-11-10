@@ -1,3 +1,4 @@
+import enum
 from decimal import Decimal
 from typing import Any
 
@@ -8,8 +9,8 @@ class DomainException(Exception):
 
 class DomainDoesNotExist(DomainException):
     """Сущность отсутствует в базе данных."""
-    def __init__(self, domain) -> None:
-        super().__init__(f"Domain '{domain.__class__.__name__}' does not exist.")
+    def __init__(self, message: str) -> None:
+        super().__init__(message)
 
 
 class ProductDoesNotExistInCart(DomainException):
@@ -41,16 +42,9 @@ class TheOrderLinesDoesNotExist(DomainException):
         super().__init__("The Order Line does not exist.")
 
 
-class ItemsCannotBeOrdered(DomainException):
-    """Некоторые товары нельзя заказать в данный момент."""
-    def __init__(self, sku: str) -> None:
-        super().__init__(f"Not enough stock in the warehouse for sku={sku}")
-        self.sku = sku
-
-
 class InvalidStatusTransition(DomainException):
     """Недопустимый переход статуса."""
-    def __init__(self, old_status: ..., new_status: ...) -> None:
+    def __init__(self, old_status: enum.Enum, new_status: enum.Enum) -> None:
         super().__init__(f"Status transition {old_status.name} -> {new_status.name} is not allowed")
         self.old_status = old_status
         self.new_status = new_status
@@ -80,15 +74,17 @@ class OrderDoesNotExist(DomainDoesNotExist):
     """Заказа с таким id не существует."""
     def __init__(self, order_id: str):
         super().__init__(f"Order {order_id} does not exist.")
+        self.order_id = order_id
 
 
 class AllocationDoesNotExist(DomainDoesNotExist):
     """Размещения для такого заказа не существует."""
     def __init__(self, order_id: str):
         super().__init__(f"Allocation {order_id} does not exist.")
+        self.order_id = order_id
 
 
-class AllocationAlreadyExist(DomainDoesNotExist):
+class AllocationAlreadyExist(DomainException):
     """Размещения для такого заказа уже существует."""
     def __init__(self, order_id: str):
         super().__init__(f"Allocation {order_id} already exist.")

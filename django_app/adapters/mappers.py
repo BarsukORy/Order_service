@@ -90,11 +90,12 @@ def order_to_domain(order_orm: OrderModel, order_lines_orm: Iterable[OrderLineMo
 
 
 def inventory_item_to_domain(inventory_item_orm: InventoryItemModel) -> InventoryItem:
-    return InventoryItem(
+    return InventoryItem.restore(
         sku=inventory_item_orm.sku,
         warehouse_id=inventory_item_orm.warehouse_id,
         physical_quantity=inventory_item_orm.physical_quantity,
-        reserved_quantity=inventory_item_orm.reserved_quantity
+        reserved_quantity=inventory_item_orm.reserved_quantity,
+        version_number=inventory_item_orm.version_number
     )
 
 

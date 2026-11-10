@@ -1,5 +1,5 @@
 from django.db import IntegrityError
-from django.db.models import Q, Sum, F, Value
+from django.db.models import Sum, F, Value
 from django.db.models.functions import Coalesce
 from business_logic.domain.exceptions import (DomainDoesNotExist,
                                               CartDoesNotExist,
@@ -39,9 +39,14 @@ from django_app.adapters.mappers import (person_to_domain,
                                          status_to_db)
 
 
-def get_object_or_raise_except(model, **filters):
+def get_object_or_raise_except(model, select_related_fields=None, **filters):
+    queryset = model.objects.all()
+
+    if select_related_fields:
+        queryset = queryset.select_related(*select_related_fields)
+
     try:
-        return model.objects.get(**filters)
+        return queryset.get(**filters)
     except model.DoesNotExist as exc:
         entities = ", ".join(f'{k}={v}' for k, v in filters.items())
         raise DomainDoesNotExist(f'{model.__name__} does not exist: {entities}') from exc
@@ -62,7 +67,7 @@ def apply_optimistic_lock(aggregate_model: type[BaseAggregateModel], current_ver
 
 class DjangoPersonRepository(AbstractPersonRepository):
 
-    def get_person_by_id(self, person_id) -> Person:
+    def get_person_by_id(self, person_id: str) -> Person:
         person_orm = get_object_or_raise_except(PersonModel, domain_id=person_id)
         return person_to_domain(person_orm)
 
@@ -77,7 +82,7 @@ class DjangoPersonRepository(AbstractPersonRepository):
 
 class DjangoProductRepository(AbstractProductRepository):
 
-    def get_product_by_sku(self, sku) -> Product:
+    def get_product_by_sku(self, sku: str) -> Product:
         product_orm = get_object_or_raise_except(ProductModel, sku=sku)
         return product_to_domain(product_orm)
 
@@ -92,12 +97,12 @@ class DjangoProductRepository(AbstractProductRepository):
 class DjangoCartRepository(AbstractCartRepository):
 
     def create_cart(self, cart: Cart) -> None:
-        person_orm = get_object_or_raise_except(PersonModel, domain_id=cart.person_id)
+        person_orm = get_object_or_raise_except(PersonModel, domain_id=cart.person.person_id)
 
         try:
             cart_orm = CartModel.objects.create(person=person_orm)
         except IntegrityError:
-            raise CartAlreadyExist(cart.person_id)
+            raise CartAlreadyExist(cart.person.person_id)
 
         if cart.cart_lines:
             model_lines = []
@@ -114,7 +119,7 @@ class DjangoCartRepository(AbstractCartRepository):
 
         self._add_aggregate_to_seen(cart)
 
-    def get_cart_by_person(self, person_id) -> Cart:
+    def get_cart_by_person(self, person_id: str) -> Cart:
         person_orm = get_object_or_raise_except(PersonModel, domain_id=person_id)
 
         try:
@@ -133,17 +138,17 @@ class DjangoCartRepository(AbstractCartRepository):
             for line_orm in CartLineModel.objects.filter(cart=cart_orm).select_related('product')
         }
 
-        prefer_lines = {
+        preferred_lines = {
             line.product.sku: line
             for line in cart.cart_lines.values()
         }
 
-        CartLineModel.objects.filter(cart=cart_orm).exclude(product__sku__in=prefer_lines.keys()).delete()
+        CartLineModel.objects.filter(cart=cart_orm).exclude(product__sku__in=preferred_lines.keys()).delete()
 
         line_for_created = []
         line_for_updated = []
 
-        for sku, line in prefer_lines.items():
+        for sku, line in preferred_lines.items():
             if sku not in existing_lines:
                 product_orm = get_object_or_raise_except(ProductModel, sku=sku)
                 line_orm_new = CartLineModel(cart=cart_orm, product=product_orm, quantity=line.quantity)
@@ -159,12 +164,12 @@ class DjangoCartRepository(AbstractCartRepository):
 
     def save_cart(self, cart: Cart) -> None:
         try:
-            cart_orm = get_object_or_raise_except(CartModel, person__domain_id=cart.person_id)
+            cart_orm = get_object_or_raise_except(CartModel, person__domain_id=cart.person.person_id)
         except DomainDoesNotExist:
-            raise CartDoesNotExist(cart.person_id)
+            raise CartDoesNotExist(cart.person.person_id)
 
         try:
-            apply_optimistic_lock(CartModel, cart.version_number, person__domain_id=cart.person_id)
+            apply_optimistic_lock(CartModel, cart.version_number, person__domain_id=cart.person.person_id)
         except OptimisticLockError:
             raise OptimisticLockError()
 
@@ -202,8 +207,8 @@ class DjangoOrderRepository(AbstractOrderRepository):
 
         self._add_aggregate_to_seen(order)
 
-    def get_order_by_id(self, order_id) -> Order:
-        order_orm = get_object_or_raise_except(OrderModel, domain_id=order_id)
+    def get_order_by_id(self, order_id: str) -> Order:
+        order_orm = get_object_or_raise_except(OrderModel, select_related_fields=['person'], domain_id=order_id)
         order_lines_orm = OrderLineModel.objects.filter(order=order_orm)
         return order_to_domain(order_orm, order_lines_orm)
 
@@ -215,7 +220,7 @@ class DjangoOrderRepository(AbstractOrderRepository):
             raise OrderDoesNotExist(order.order_id)
 
         try:
-            apply_optimistic_lock(OrderModel, order.version_number, order_id=order.order_id)
+            apply_optimistic_lock(OrderModel, order.version_number, domain_id=order.order_id)
         except OptimisticLockError:
             raise OptimisticLockError()
 
@@ -236,15 +241,24 @@ class DjangoInventoryItemRepository(AbstractInventoryItemRepository):
         items_orm = InventoryItemModel.objects.filter(sku__in=sku_list)
         return inventory_items_to_domain(items_orm)
 
+    def get_inv_items_by_sku_for_update(self,  sku_list: list[str]) -> dict[tuple[str, str], InventoryItem]:
+        items_orm = InventoryItemModel.objects.select_for_update().filter(sku__in=sku_list)
+        return inventory_items_to_domain(items_orm)
+
     def save_inv_items(self, inventory_items: dict[tuple[str, str], InventoryItem]) -> None:
-        q = Q()
-        for sku, warehouse_id in inventory_items.keys():
-            q |= Q(sku=sku, warehouse_id=warehouse_id)
-        items_orm = InventoryItemModel.objects.filter(q)
-        for item in items_orm:
-            item.physical_quantity = inventory_items[(item.sku, item.warehouse_id)].physical_quantity
-            item.reserved_quantity = inventory_items[(item.sku, item.warehouse_id)].reserved_quantity
-        InventoryItemModel.objects.bulk_update(items_orm, fields=['physical_quantity', 'reserved_quantity'])
+        rows = [
+            InventoryItemModel(
+                sku=sku, warehouse_id=wh_id,
+                physical_quantity=item.physical_quantity,
+                reserved_quantity=item.reserved_quantity,
+                version_number=item.version_number + 1
+            )
+            for (sku, wh_id), item in inventory_items.items()
+        ]
+        InventoryItemModel.objects.bulk_update(rows,
+                                               fields=['physical_quantity', 'reserved_quantity', 'version_number'])
+        for item in inventory_items.values():
+            item.increment_version()
 
     def get_available_quantity_items_by_sku(self, sku_list: list[str]) -> dict[str, int]:
         inv_items = (InventoryItemModel.objects.filter(sku__in=sku_list).values('sku').annotate(
@@ -261,7 +275,7 @@ class DjangoAllocationRepository(AbstractAllocationRepository):
     def _save_reserved_inventory_items(
             cls,
             allocation_orm: AllocationModel,
-            reserved_inventory_items: tuple[ReservedInventoryItem]) -> None:
+            reserved_inventory_items: tuple[ReservedInventoryItem, ...]) -> None:
         res_items_orm = {
             (item_orm.sku, item_orm.warehouse_id): item_orm
             for item_orm in ReservedInventoryItemModel.objects.filter(allocation=allocation_orm)
